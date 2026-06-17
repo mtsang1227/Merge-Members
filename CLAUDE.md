@@ -17,7 +17,7 @@ Example:
 node merge.js F1.XLSX F2.XLSX
 ```
 
-Both arguments are required. If omitted, the script prints a usage hint and exits.
+Both arguments are required. If omitted, the script prints a usage hint and exits, along with a note that both input files MUST have the proper column names and that the second file does not need to have the same column ordering.
 
 Requires the `xlsx` package (already installed locally):
 
