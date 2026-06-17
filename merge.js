@@ -24,7 +24,7 @@ const f1Rows = XLSX.utils.sheet_to_json(ws1); // keyed by file1's header names
 // Read file2 rows, re-mapped to file1's header names
 const f2RawRows = XLSX.utils.sheet_to_json(ws2, { header: 1 });
 const f2Headers = f2RawRows[0];
-const f2Rows = f2RawRows.slice(1).map(row => {
+const f2Rows = f2RawRows.slice(1).filter(row => row.some(cell => cell !== null && cell !== undefined && cell !== '')).map(row => {
   const obj = {};
   f2Headers.forEach((col, i) => {
     // Find the matching file1 header (case-insensitive)
