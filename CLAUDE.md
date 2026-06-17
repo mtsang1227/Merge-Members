@@ -9,15 +9,16 @@ Merge two Excel files into a single `Result.xlsx`, using the first input file's 
 ## Running the Script
 
 ```bash
-node merge.js <file1.xlsx> <file2.xlsx>
+node merge.js <file1.xlsx> <file2.xlsx> [output.xlsx]
 ```
 
 Example:
 ```bash
 node merge.js F1.XLSX F2.XLSX
+node merge.js F1.XLSX F2.XLSX MyOutput.xlsx
 ```
 
-Both arguments are required. If omitted, the script prints a usage hint and exits, along with a note that both input files MUST have the proper column names and that the second file does not need to have the same column ordering.
+Both input file arguments are required. The third argument (output file) is optional and defaults to `Result.xlsx`. If the required arguments are omitted, the script prints a usage hint and exits, along with a note that both input files MUST have the proper column names and that the second file does not need to have the same column ordering.
 
 Requires the `xlsx` package (already installed locally):
 

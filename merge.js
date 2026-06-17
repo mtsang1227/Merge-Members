@@ -2,11 +2,12 @@ const XLSX = require('xlsx');
 const path = require('path');
 
 // Read input file arguments
-const [file1, file2] = process.argv.slice(2);
+const [file1, file2, file3] = process.argv.slice(2);
 
 if (!file1 || !file2) {
-  console.error('Usage: node merge.js <file1.xlsx> <file2.xlsx>');
+  console.error('Usage: node merge.js <file1.xlsx> <file2.xlsx> [output.xlsx]');
   console.error('Both input files MUST have the proper column names. The second file does not need to have the same column ordering.');
+  console.error('The third argument is optional and specifies the output file name (default: Result.xlsx).');
   process.exit(1);
 }
 
@@ -43,7 +44,7 @@ const wsOut = XLSX.utils.json_to_sheet(merged, { header: f1Headers });
 const wbOut = XLSX.utils.book_new();
 XLSX.utils.book_append_sheet(wbOut, wsOut, 'Merged');
 
-const outputFile = 'Result.xlsx';
+const outputFile = file3 || 'Result.xlsx';
 XLSX.writeFile(wbOut, outputFile);
 
 // Summary
