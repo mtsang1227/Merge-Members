@@ -6,6 +6,7 @@ const [file1, file2] = process.argv.slice(2);
 
 if (!file1 || !file2) {
   console.error('Usage: node merge.js <file1.xlsx> <file2.xlsx>');
+  console.error('Both input files MUST have the proper column names. The second file does not need to have the same column ordering.');
   process.exit(1);
 }
 
