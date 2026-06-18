@@ -51,4 +51,5 @@ Records merged into 2026-Merged-List.xlsx: 562
 - Header row auto-detection: within the first 5 rows, the row with the most non-empty cells is treated as the header row — description rows above it are skipped automatically
 - The second file's columns are matched to the first file's headers case-insensitively, so minor casing differences are handled automatically
 - All rows from file1 appear before rows from file2 in the result
-- Each file2 record is tagged with the provided `fellowship_name` under the `Fellowship` column; if `Fellowship` does not exist in file1's headers it is appended as the last column
+- Each file2 record is tagged with the provided `fellowship_name` under the `Fellowship` column
+- It is strongly recommended to have "fellowship" column and value in the file1; if `Fellowship` does not exist in file1's headers it is appended as the last column with empty value.
