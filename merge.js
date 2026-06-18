@@ -2,12 +2,13 @@ const XLSX = require('xlsx');
 const path = require('path');
 
 // Read input file arguments
-const [file1, file2, file3] = process.argv.slice(2);
+const [file1, file2, fellowshipName, file3] = process.argv.slice(2);
 
-if (!file1 || !file2) {
-  console.error('Usage: node merge.js <file1.xlsx> <file2.xlsx> [output.xlsx]');
+if (!file1 || !file2 || !fellowshipName) {
+  console.error('Usage: node merge.js <file1.xlsx> <file2.xlsx> <fellowship_name> [output.xlsx]');
   console.error('Both input files MUST have the proper column names. The second file does not need to have the same column ordering.');
-  console.error('The third argument is optional and specifies the output file name (default: Result.xlsx).');
+  console.error('The third argument is the fellowship name to tag each file2 record under the "Fellowship" column.');
+  console.error('The fourth argument is optional and specifies the output file name (default: Result.xlsx).');
   process.exit(1);
 }
 
@@ -19,28 +20,60 @@ const wb2 = XLSX.readFile(file2);
 const ws1 = wb1.Sheets[wb1.SheetNames[0]];
 const ws2 = wb2.Sheets[wb2.SheetNames[0]];
 
-// Read file1 with its headers (used as the canonical column order)
-const f1Headers = XLSX.utils.sheet_to_json(ws1, { header: 1 })[0];
-const f1Rows = XLSX.utils.sheet_to_json(ws1); // keyed by file1's header names
+// Within the first maxLookAhead rows, return the index of the row with the most non-empty cells.
+// Description rows are typically sparse (1-2 cells); the real header row fills every column.
+function findHeaderRowIndex(rawRows, maxLookAhead = 5) {
+  const limit = Math.min(maxLookAhead, rawRows.length);
+  let bestIdx = 0, bestCount = -1;
+  for (let i = 0; i < limit; i++) {
+    const count = (rawRows[i] || []).filter(c => c !== null && c !== undefined && c !== '').length;
+    if (count > bestCount) { bestCount = count; bestIdx = i; }
+  }
+  return bestIdx;
+}
 
-// Read file2 rows, re-mapped to file1's header names
-const f2RawRows = XLSX.utils.sheet_to_json(ws2, { header: 1 });
-const f2Headers = f2RawRows[0];
-const f2Rows = f2RawRows.slice(1).filter(row => row.some(cell => cell !== null && cell !== undefined && cell !== '')).map(row => {
-  const obj = {};
-  f2Headers.forEach((col, i) => {
-    // Find the matching file1 header (case-insensitive)
-    const f1Col = f1Headers.find(h => h.toLowerCase() === col.toLowerCase());
-    if (f1Col) obj[f1Col] = row[i];
+// Read file1: detect header row, build row objects keyed by header name
+const f1RawRows = XLSX.utils.sheet_to_json(ws1, { header: 1 });
+const f1HeaderIdx = findHeaderRowIndex(f1RawRows);
+const f1Headers = f1RawRows[f1HeaderIdx];
+const f1Rows = f1RawRows.slice(f1HeaderIdx + 1)
+  .filter(row => row.some(c => c !== null && c !== undefined && c !== ''))
+  .map(row => {
+    const obj = {};
+    f1Headers.forEach((col, i) => { if (col) obj[col] = row[i]; });
+    return obj;
   });
-  return obj;
-});
+
+// Resolve the canonical "Fellowship" column name (case-insensitive match against file1 headers, or use as-is)
+const fellowshipCol = f1Headers.find(h => h && h.toLowerCase() === 'fellowship') || 'Fellowship';
+
+// Read file2: detect header row, re-map columns to file1's header names
+const f2RawRows = XLSX.utils.sheet_to_json(ws2, { header: 1 });
+const f2HeaderIdx = findHeaderRowIndex(f2RawRows);
+const f2Headers = f2RawRows[f2HeaderIdx];
+const f2Rows = f2RawRows.slice(f2HeaderIdx + 1)
+  .filter(row => row.some(c => c !== null && c !== undefined && c !== ''))
+  .map(row => {
+    const obj = {};
+    f2Headers.forEach((col, i) => {
+      if (!col) return;
+      const f1Col = f1Headers.find(h => h && h.toLowerCase() === col.toLowerCase());
+      if (f1Col) obj[f1Col] = row[i];
+    });
+    obj[fellowshipCol] = fellowshipName;
+    return obj;
+  });
 
 // Merge: file1 rows first, then file2 rows
 const merged = [...f1Rows, ...f2Rows];
 
-// Build output workbook using file1's headers
-const wsOut = XLSX.utils.json_to_sheet(merged, { header: f1Headers });
+// Build output headers: file1's headers, plus Fellowship if not already present
+const outHeaders = f1Headers.includes(fellowshipCol)
+  ? f1Headers
+  : [...f1Headers, fellowshipCol];
+
+// Build output workbook
+const wsOut = XLSX.utils.json_to_sheet(merged, { header: outHeaders });
 const wbOut = XLSX.utils.book_new();
 XLSX.utils.book_append_sheet(wbOut, wsOut, 'Merged');
 
