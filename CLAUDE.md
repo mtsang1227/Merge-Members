@@ -47,6 +47,8 @@ Records merged into 2026-Merged-List.xlsx: 562
 
 ## Key Logic in merge.js
 
+- Only the first sheet in each .XLSX file will be merged into the output file
+- The first XLSX file should have the column "Fellowship" with its proper value. You may need to add it before doing the first merge action to get the proper result
 - The first input file's headers define the column order and names in the output
 - Header row auto-detection: within the first 5 rows, the row with the most non-empty cells is treated as the header row — description rows above it are skipped automatically
 - The second file's columns are matched to the first file's headers case-insensitively, so minor casing differences are handled automatically
