@@ -72,13 +72,31 @@ const outHeaders = f1Headers.includes(fellowshipCol)
   ? f1Headers
   : [...f1Headers, fellowshipCol];
 
-// Build output workbook
-const wsOut = XLSX.utils.json_to_sheet(merged, { header: outHeaders });
-const wbOut = XLSX.utils.book_new();
-XLSX.utils.book_append_sheet(wbOut, wsOut, 'Merged');
-
 const outputFile = file3 || 'Result.xlsx';
-XLSX.writeFile(wbOut, outputFile);
+
+// If the output path is file1 itself, avoid rebuilding a brand new workbook from scratch:
+// just append file2's rows onto file1's existing sheet, leaving its original rows,
+// formatting, and any other sheets untouched.
+const inPlace = path.resolve(file1) === path.resolve(outputFile);
+
+if (inPlace) {
+  if (!f1Headers.includes(fellowshipCol)) {
+    const headerCell = XLSX.utils.encode_cell({ r: f1HeaderIdx, c: f1Headers.length });
+    XLSX.utils.sheet_add_aoa(ws1, [[fellowshipCol]], { origin: headerCell });
+  }
+  XLSX.utils.sheet_add_json(ws1, f2Rows, {
+    header: outHeaders,
+    skipHeader: true,
+    origin: f1RawRows.length,
+  });
+  XLSX.writeFile(wb1, outputFile);
+} else {
+  // Build a fresh output workbook
+  const wsOut = XLSX.utils.json_to_sheet(merged, { header: outHeaders });
+  const wbOut = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wbOut, wsOut, 'Merged');
+  XLSX.writeFile(wbOut, outputFile);
+}
 
 // Summary
 console.log('');
