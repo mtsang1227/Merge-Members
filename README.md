@@ -17,5 +17,6 @@ Usage: node merge.js <file1.xlsx> <file2.xlsx> <fellowship_name> [output.xlsx]
 - Both input files MUST have the proper column names. The second file does not need to have the same column ordering.
 - The third argument is the fellowship name to tag each file2 record under the "Fellowship" column.
 - The fourth argument is optional and specifies the output file name (default: Result.xlsx).
+- If the output file resolves to the same path as file1, no new file is built — file2's records are appended directly onto file1's existing sheet in place, leaving file1's original rows, formatting, and other sheets untouched. Otherwise, a fresh output file is created.
 
 

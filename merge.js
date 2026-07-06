@@ -9,6 +9,7 @@ if (!file1 || !file2 || !fellowshipName) {
   console.error('Both input files MUST have the proper column names. The second file does not need to have the same column ordering.');
   console.error('The third argument is the fellowship name to tag each file2 record under the "Fellowship" column.');
   console.error('The fourth argument is optional and specifies the output file name (default: Result.xlsx).');
+  console.error('If the output file is the same as file1, file2\'s records are appended directly onto file1 instead of building a new file.');
   process.exit(1);
 }
 

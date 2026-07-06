@@ -55,3 +55,4 @@ Records merged into 2026-Merged-List.xlsx: 562
 - All rows from file1 appear before rows from file2 in the result
 - Each file2 record is tagged with the provided `fellowship_name` under the `Fellowship` column
 - It is strongly recommended to have "fellowship" column and value in the file1; if `Fellowship` does not exist in file1's headers it is appended as the last column with empty value.
+- Output handling: if the output path resolves to the same file as file1, no new workbook is built — file2's records are appended directly onto file1's existing sheet in place (preserving file1's original rows, formatting, and any other sheets). Otherwise, a brand new output workbook is created from the merged data.
