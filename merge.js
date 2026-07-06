@@ -37,7 +37,7 @@ const f1RawRows = XLSX.utils.sheet_to_json(ws1, { header: 1 });
 const f1HeaderIdx = findHeaderRowIndex(f1RawRows);
 const f1Headers = f1RawRows[f1HeaderIdx];
 const f1Rows = f1RawRows.slice(f1HeaderIdx + 1)
-  .filter(row => row.some(c => c !== null && c !== undefined && c !== ''))
+  .filter(row => row.some(c => c !== null && c !== undefined && String(c).trim() !== ''))
   .map(row => {
     const obj = {};
     f1Headers.forEach((col, i) => { if (col) obj[col] = row[i]; });
@@ -52,7 +52,7 @@ const f2RawRows = XLSX.utils.sheet_to_json(ws2, { header: 1 });
 const f2HeaderIdx = findHeaderRowIndex(f2RawRows);
 const f2Headers = f2RawRows[f2HeaderIdx];
 const f2Rows = f2RawRows.slice(f2HeaderIdx + 1)
-  .filter(row => row.some(c => c !== null && c !== undefined && c !== ''))
+  .filter(row => row.some(c => c !== null && c !== undefined && String(c).trim() !== ''))
   .map(row => {
     const obj = {};
     f2Headers.forEach((col, i) => {
