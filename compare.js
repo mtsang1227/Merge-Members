@@ -38,7 +38,10 @@ function readSheet(file) {
     .filter(row => row.some(c => c !== null && c !== undefined && String(c).trim() !== ''))
     .map(row => {
       const obj = {};
-      headers.forEach((col, i) => { if (col) obj[col] = row[i]; });
+      // Default missing/blank cells to '' rather than leaving them undefined - template
+      // literals elsewhere (e.g. nameTokenSet) would otherwise coerce undefined into the
+      // literal text "undefined" and silently corrupt the comparison.
+      headers.forEach((col, i) => { if (col) obj[col] = row[i] === undefined ? '' : row[i]; });
       return obj;
     });
   return { headers, rows };
@@ -139,6 +142,14 @@ masterRows.forEach(row => {
   masterIndex.get(key).push(row);
 });
 
+// Index master rows by Last Name only, for the cross-Fellowship fallback tier below.
+const masterByLastName = new Map();
+masterRows.forEach(row => {
+  const key = normKey(row[mLastName]);
+  if (!masterByLastName.has(key)) masterByLastName.set(key, []);
+  masterByLastName.get(key).push(row);
+});
+
 const noChangeRecords = [];
 const yesChangeRecords = [];
 const notFoundRecords = [];
@@ -147,6 +158,10 @@ const notFoundRecords = [];
 const fieldComparisons = [
   [gFirstName, mFirstName, (a, b) => normKey(a) === normKey(b)],
   [gMiddleName, mMiddleName, (a, b) => normText(a) === normText(b)],
+  // Master's Fellowship is a full string ("Bayview Cantonese - 2023 Esther"); merged's is just
+  // the last word ("Esther"). Only ever differs for cross-Fellowship fallback matches (see
+  // below), since the other tiers already scope by matching Fellowship.
+  [gFellowship, mFellowship, (a, b) => normKey(a) === normKey(fellowshipLastWord(b))],
   [gChinese, mChineseName, (a, b) => normText(a) === normText(b)],
   [gHomePhone, mHomePhone, (a, b) => digitsOnly(a) === digitsOnly(b)],
   [gMobilePhone, mMobileNumber, (a, b) => digitsOnly(a) === digitsOnly(b)],
@@ -177,13 +192,30 @@ mergedRows.forEach(mergedRow => {
   }
 
   if (candidates.length === 0) {
+    // Same person may be a member of a different Fellowship than master has them scoped
+    // under (people can join more than one). Search by Last Name across all Fellowships,
+    // requiring a strict First+Middle token-set match - the loose plain-First-only tolerance
+    // used above is only safe when also scoped by Fellowship, since dropping that scope lets
+    // common first names collide with unrelated people of the same last name. Also exclude
+    // candidates whose Chinese Name actively disagrees, as further protection against that.
+    matchMethod = 'Name (different Fellowship)';
+    const gTokenSet = nameTokenSet(mergedRow[gFirstName], mergedRow[gMiddleName]);
+    candidates = (masterByLastName.get(normKey(mergedRow[gLastName])) || [])
+      .filter(mr => nameTokenSet(mr[mFirstName], mr[mMiddleName]) === gTokenSet)
+      .filter(mr => {
+        const gC = normText(mergedRow[gChinese]), mC = normText(mr[mChineseName]);
+        return !gC || !mC || gC === mC;
+      });
+  }
+
+  if (candidates.length === 0) {
     notFoundRecords.push({ ...mergedRow, Reason: 'No master record found' });
     return;
   }
   if (candidates.length > 1) {
-    const reason = matchMethod === 'Name'
-      ? 'Multiple master candidates even after Chinese tiebreak'
-      : 'Multiple master candidates matched by Mobile Phone/Email';
+    const reason = matchMethod === 'Name' ? 'Multiple master candidates even after Chinese tiebreak'
+      : matchMethod === 'Contact info (name mismatch)' ? 'Multiple master candidates matched by Mobile Phone/Email'
+      : 'Multiple master candidates across different Fellowships (same name)';
     notFoundRecords.push({ ...mergedRow, Reason: reason });
     return;
   }
@@ -220,7 +252,14 @@ const wbNotFound = XLSX.utils.book_new();
 XLSX.utils.book_append_sheet(wbNotFound, wsNotFound, 'notFound');
 XLSX.writeFile(wbNotFound, notFoundFile);
 
-const contactMatchCount = [...noChangeRecords, ...yesChangeRecords].filter(r => r['Match Method'] !== 'Name').length;
+const matchMethodCounts = [...noChangeRecords, ...yesChangeRecords].reduce((acc, r) => {
+  acc[r['Match Method']] = (acc[r['Match Method']] || 0) + 1;
+  return acc;
+}, {});
+const fallbackBreakdown = Object.entries(matchMethodCounts)
+  .filter(([method]) => method !== 'Name')
+  .map(([method, count]) => `${count} via ${method.toLowerCase()}`)
+  .join(', ');
 const reasonCounts = notFoundRecords.reduce((acc, r) => {
   acc[r.Reason] = (acc[r.Reason] || 0) + 1;
   return acc;
@@ -231,7 +270,7 @@ console.log('=== Compare Summary ===');
 console.log(`Master file (${path.basename(masterFile)}): ${masterRows.length} records`);
 console.log(`Merged file (${path.basename(mergedFile)}): ${mergedRows.length} records`);
 console.log(`No change (${noChangeFile}): ${noChangeRecords.length}`);
-console.log(`Changed (${yesChangeFile}): ${yesChangeRecords.length}${contactMatchCount ? ` (${contactMatchCount} matched via Mobile Phone/Email fallback, not name)` : ''}`);
+console.log(`Changed (${yesChangeFile}): ${yesChangeRecords.length}${fallbackBreakdown ? ` (${fallbackBreakdown})` : ''}`);
 if (notFoundRecords.length) {
   const breakdown = Object.entries(reasonCounts).map(([reason, count]) => `${count} ${reason.toLowerCase()}`).join(', ');
   console.log(`Not found (${notFoundFile}): ${notFoundRecords.length} (${breakdown})`);
