@@ -158,6 +158,26 @@ function dedupeById(candidates, idCol, fellowshipCol, mergedFellowship) {
   return [...byId.values()].map(rows => rows.find(r => normKey(fellowshipLastWord(r[fellowshipCol])) === normKey(mergedFellowship)) || rows[0]);
 }
 
+// Mobile/Email match within a candidate pool, with the same tiebreak cascade used whether the
+// pool is scoped to one Fellowship or spans all of them: dedupe by Id, then narrow by Chinese
+// Name, then by loose name resemblance (handles a shared family email/mobile cross-attributed
+// to the wrong person, where one candidate's name still looks like the merged record's).
+function matchByContact(pool, mergedRow, mergedFellowship) {
+  let candidates = dedupeById(
+    pool.filter(mr => contactMatches(mergedRow[gMobilePhone], mergedRow[gEmail], mr[mMobileNumber], mr[mEmail])),
+    mId, mFellowship, mergedFellowship);
+
+  if (candidates.length > 1) {
+    const chineseFiltered = candidates.filter(mr => normText(mr[mChineseName]) === normText(mergedRow[gChinese]));
+    if (chineseFiltered.length >= 1) candidates = chineseFiltered;
+  }
+  if (candidates.length > 1) {
+    const nameFiltered = candidates.filter(mr => nameResembles(mergedRow[gFirstName], mergedRow[gMiddleName], mr[mFirstName], mr[mMiddleName]));
+    if (nameFiltered.length >= 1) candidates = nameFiltered;
+  }
+  return candidates;
+}
+
 // Index master rows by (lastName, fellowshipLastWord); first name (with the split-inconsistency
 // tolerance above) and SG (abbreviation-tolerant) are filtered from each bucket per merged record.
 const masterIndex = new Map();
@@ -202,12 +222,26 @@ mergedRows.forEach(mergedRow => {
   const key = [normKey(mergedRow[gLastName]), normKey(mergedRow[gFellowship])].join('|');
   const bucket = masterIndex.get(key) || [];
   let matchMethod = 'Name';
-  let candidates = dedupeById(
-    bucket.filter(mr => firstNameMatches(mergedRow[gFirstName], mergedRow[gMiddleName], mr[mFirstName], mr[mMiddleName])),
-    mId, mFellowship, mergedRow[gFellowship]);
+
+  // Chinese Name is checked first, ahead of the name match: it's a stronger, less collision-
+  // prone signal than a bare English first name (which can't tell two different "Amy"s in the
+  // same bucket apart). Without this, a plain-name match landing on exactly one WRONG candidate
+  // (Chinese Name blank/mismatched) was silently preferred over a different bucket member whose
+  // Chinese Name matched exactly - found via two different merged "Amy Fung" LTG rows both
+  // resolving to the same wrong master Id, only one of which actually belonged there.
+  const gChineseName = normText(mergedRow[gChinese]);
+  const chineseMatches = gChineseName
+    ? bucket.filter(mr => normText(mr[mChineseName]) === gChineseName)
+    : [];
+
+  let candidates = chineseMatches.length === 1
+    ? chineseMatches
+    : dedupeById(
+        bucket.filter(mr => firstNameMatches(mergedRow[gFirstName], mergedRow[gMiddleName], mr[mFirstName], mr[mMiddleName])),
+        mId, mFellowship, mergedRow[gFellowship]);
 
   if (candidates.length > 1) {
-    const chineseFiltered = candidates.filter(mr => normText(mr[mChineseName]) === normText(mergedRow[gChinese]));
+    const chineseFiltered = candidates.filter(mr => normText(mr[mChineseName]) === gChineseName);
     if (chineseFiltered.length >= 1) candidates = chineseFiltered;
   }
 
@@ -215,20 +249,7 @@ mergedRows.forEach(mergedRow => {
     // Name text didn't line up (incomplete data, unrecognized nickname, etc). Fall back to
     // Mobile Phone / Email, which can uniquely identify the same person within this bucket.
     matchMethod = 'Contact info (name mismatch)';
-    candidates = dedupeById(
-      bucket.filter(mr => contactMatches(mergedRow[gMobilePhone], mergedRow[gEmail], mr[mMobileNumber], mr[mEmail])),
-      mId, mFellowship, mergedRow[gFellowship]);
-
-    if (candidates.length > 1) {
-      const chineseFiltered = candidates.filter(mr => normText(mr[mChineseName]) === normText(mergedRow[gChinese]));
-      if (chineseFiltered.length >= 1) candidates = chineseFiltered;
-    }
-    if (candidates.length > 1) {
-      // Mobile matched one candidate, Email matched a different one (e.g. a shared family
-      // email cross-attributed to the wrong person) - prefer whichever also has a resembling name.
-      const nameFiltered = candidates.filter(mr => nameResembles(mergedRow[gFirstName], mergedRow[gMiddleName], mr[mFirstName], mr[mMiddleName]));
-      if (nameFiltered.length >= 1) candidates = nameFiltered;
-    }
+    candidates = matchByContact(bucket, mergedRow, mergedRow[gFellowship]);
   }
 
   if (candidates.length === 0) {
@@ -240,8 +261,9 @@ mergedRows.forEach(mergedRow => {
     // candidates whose Chinese Name actively disagrees, as further protection against that.
     matchMethod = 'Name (different Fellowship)';
     const gTokenSet = nameTokenSet(mergedRow[gFirstName], mergedRow[gMiddleName]);
+    const crossFellowshipPool = masterByLastName.get(normKey(mergedRow[gLastName])) || [];
     candidates = dedupeById(
-      (masterByLastName.get(normKey(mergedRow[gLastName])) || [])
+      crossFellowshipPool
         .filter(mr => nameTokenSet(mr[mFirstName], mr[mMiddleName]) === gTokenSet)
         .filter(mr => {
           const gC = normText(mergedRow[gChinese]), mC = normText(mr[mChineseName]);
@@ -255,6 +277,20 @@ mergedRows.forEach(mergedRow => {
       const contactFiltered = candidates.filter(mr => contactMatches(mergedRow[gMobilePhone], mergedRow[gEmail], mr[mMobileNumber], mr[mEmail]));
       if (contactFiltered.length >= 1) candidates = contactFiltered;
     }
+
+    if (candidates.length !== 1) {
+      // Either nothing matched by name, or multiple same-named-but-otherwise-uncorroborated
+      // candidates are stuck unresolved (e.g. two different "Amy Fung"s, neither of which is
+      // the true match - the strict name-token requirement above can wrongly exclude the real
+      // match, like "Amy" vs master's "Amy Pui To"). A clean, unique Mobile/Email match anywhere
+      // in this Last Name pool is stronger evidence than a same-name-only coincidence, so it
+      // takes priority over an unresolved name-tier result.
+      const contactCandidates = matchByContact(crossFellowshipPool, mergedRow, mergedRow[gFellowship]);
+      if (contactCandidates.length === 1) {
+        candidates = contactCandidates;
+        matchMethod = 'Contact info (different Fellowship, name mismatch)';
+      }
+    }
   }
 
   if (candidates.length === 0) {
@@ -264,7 +300,8 @@ mergedRows.forEach(mergedRow => {
   if (candidates.length > 1) {
     const reason = matchMethod === 'Name' ? 'Multiple master candidates even after Chinese tiebreak'
       : matchMethod === 'Contact info (name mismatch)' ? 'Multiple master candidates matched by Mobile Phone/Email'
-      : 'Multiple master candidates across different Fellowships (same name)';
+      : matchMethod === 'Name (different Fellowship)' ? 'Multiple master candidates across different Fellowships (same name)'
+      : 'Multiple master candidates across different Fellowships matched by Mobile Phone/Email';
     notFoundRecords.push({ ...mergedRow, Reason: reason });
     return;
   }
