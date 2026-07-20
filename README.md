@@ -24,9 +24,10 @@ Usage: node merge.js <file1.xlsx> <file2.xlsx> <fellowship_name> [output.xlsx]
 Once fellowship files are merged, `compare.js` checks the merged records against the master `DynamicGroupReport.xlsx` export (the source of truth for member `Id`) to find which records are new, unchanged, or different.
 
 Usage: node compare.js <masterFile.xlsx> <mergedFile.xlsx> [noChangeOut.xlsx] [yesChangeOut.xlsx]
-- Records are matched by Last Name, First/Middle Name (tolerant of full-name-in-one-field and name-order differences), Fellowship, and SG Name/Small Group (tolerant of abbreviations), with Chinese Name used to break ties when more than one master record matches.
-- Matched records with no field differences are written to `noChangeOut.xlsx` (default `noChange.xlsx`), tagged with the master `Id`.
-- Matched records with at least one field difference are written to `yesChangeOut.xlsx` (default `yesChange.xlsx`), tagged with the master `Id` and a `Changed Fields` column.
-- Records that can't be resolved to exactly one master record (new members, nickname mismatches, incomplete data, etc.) are written to `notFound.xlsx` with a `Reason` column.
+- Records are matched by Last Name, First/Middle Name (tolerant of full-name-in-one-field and name-order differences), and Fellowship, with Chinese Name used to break ties when more than one master record matches.
+- If the name text doesn't line up at all (incomplete data, unrecognized nickname), matching falls back to Mobile Phone or Email within the same Last Name + Fellowship group. Home Phone is intentionally not used for this fallback since it can be shared by a household/spouse.
+- Matched records with no field differences are written to `noChangeOut.xlsx` (default `noChange.xlsx`), tagged with the master `Id` and a `Match Method` column.
+- Matched records with at least one field difference are written to `yesChangeOut.xlsx` (default `yesChange.xlsx`), tagged with the master `Id`, a `Match Method` column, and a `Changed Fields` column. `Match Method` is `Name` for a normal name-based match, or `Contact info (name mismatch)` when the fallback above was used — that subset is worth extra scrutiny since contact info can occasionally be shared between family members.
+- Records that can't be resolved to exactly one master record (new members, nickname mismatches, incomplete data, same person under a different Fellowship, etc.) are written to `notFound.xlsx` with a `Reason` column.
 
 

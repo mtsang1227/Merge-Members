@@ -119,6 +119,17 @@ function firstNameMatches(gFirst, gMiddle, mFirst, mMiddle) {
   return normKey(gFirst) === normKey(mFirst) || nameTokenSet(gFirst, gMiddle) === nameTokenSet(mFirst, mMiddle);
 }
 
+// Fallback for records where the name text itself doesn't line up (e.g. incomplete name data,
+// unrecognized nickname) but Mobile Phone or Email uniquely identifies the same person within
+// the same Last Name + Fellowship bucket. Home Phone is deliberately excluded - it's often
+// shared by a household/spouse and produced a real false-positive in testing (two different
+// people with the same last name and home phone number, but different names/mobile/email).
+function contactMatches(gMobile, gEmail, mMobile, mEmail) {
+  const gM = digitsOnly(gMobile), mM = digitsOnly(mMobile);
+  const gE = normKey(gEmail), mE = normKey(mEmail);
+  return (gM && mM && gM === mM) || (gE && mE && gE === mE);
+}
+
 // Index master rows by (lastName, fellowshipLastWord); first name (with the split-inconsistency
 // tolerance above) and SG (abbreviation-tolerant) are filtered from each bucket per merged record.
 const masterIndex = new Map();
@@ -130,11 +141,11 @@ masterRows.forEach(row => {
 
 const noChangeRecords = [];
 const yesChangeRecords = [];
-const unmatched = [];
-const ambiguous = [];
+const notFoundRecords = [];
 
 // Field comparisons: [merged column, master column, comparator]
 const fieldComparisons = [
+  [gFirstName, mFirstName, (a, b) => normKey(a) === normKey(b)],
   [gMiddleName, mMiddleName, (a, b) => normText(a) === normText(b)],
   [gChinese, mChineseName, (a, b) => normText(a) === normText(b)],
   [gHomePhone, mHomePhone, (a, b) => digitsOnly(a) === digitsOnly(b)],
@@ -149,8 +160,9 @@ const fieldComparisons = [
 
 mergedRows.forEach(mergedRow => {
   const key = [normKey(mergedRow[gLastName]), normKey(mergedRow[gFellowship])].join('|');
-  let candidates = (masterIndex.get(key) || [])
-    .filter(mr => firstNameMatches(mergedRow[gFirstName], mergedRow[gMiddleName], mr[mFirstName], mr[mMiddleName]));
+  const bucket = masterIndex.get(key) || [];
+  let matchMethod = 'Name';
+  let candidates = bucket.filter(mr => firstNameMatches(mergedRow[gFirstName], mergedRow[gMiddleName], mr[mFirstName], mr[mMiddleName]));
 
   if (candidates.length > 1) {
     const chineseFiltered = candidates.filter(mr => normText(mr[mChineseName]) === normText(mergedRow[gChinese]));
@@ -158,11 +170,21 @@ mergedRows.forEach(mergedRow => {
   }
 
   if (candidates.length === 0) {
-    unmatched.push(mergedRow);
+    // Name text didn't line up (incomplete data, unrecognized nickname, etc). Fall back to
+    // Mobile Phone / Email, which can uniquely identify the same person within this bucket.
+    matchMethod = 'Contact info (name mismatch)';
+    candidates = bucket.filter(mr => contactMatches(mergedRow[gMobilePhone], mergedRow[gEmail], mr[mMobileNumber], mr[mEmail]));
+  }
+
+  if (candidates.length === 0) {
+    notFoundRecords.push({ ...mergedRow, Reason: 'No master record found' });
     return;
   }
   if (candidates.length > 1) {
-    ambiguous.push(mergedRow);
+    const reason = matchMethod === 'Name'
+      ? 'Multiple master candidates even after Chinese tiebreak'
+      : 'Multiple master candidates matched by Mobile Phone/Email';
+    notFoundRecords.push({ ...mergedRow, Reason: reason });
     return;
   }
 
@@ -171,7 +193,7 @@ mergedRows.forEach(mergedRow => {
     .filter(([gCol, mCol, cmp]) => gCol && !cmp(mergedRow[gCol], mCol ? master[mCol] : undefined, master))
     .map(([gCol]) => gCol);
 
-  const outRow = { Id: master[mId], ...mergedRow };
+  const outRow = { Id: master[mId], ...mergedRow, 'Match Method': matchMethod };
   if (changedFields.length === 0) {
     noChangeRecords.push(outRow);
   } else {
@@ -179,8 +201,8 @@ mergedRows.forEach(mergedRow => {
   }
 });
 
-const noChangeHeaders = ['Id', ...mergedHeaders];
-const yesChangeHeaders = ['Id', ...mergedHeaders, 'Changed Fields'];
+const noChangeHeaders = ['Id', ...mergedHeaders, 'Match Method'];
+const yesChangeHeaders = ['Id', ...mergedHeaders, 'Match Method', 'Changed Fields'];
 
 const wsNoChange = XLSX.utils.json_to_sheet(noChangeRecords, { header: noChangeHeaders });
 const wbNoChange = XLSX.utils.book_new();
@@ -192,23 +214,26 @@ const wbYesChange = XLSX.utils.book_new();
 XLSX.utils.book_append_sheet(wbYesChange, wsYesChange, 'yesChange');
 XLSX.writeFile(wbYesChange, yesChangeFile);
 
-const notFoundRecords = [
-  ...unmatched.map(r => ({ ...r, Reason: 'No master record found' })),
-  ...ambiguous.map(r => ({ ...r, Reason: 'Multiple master candidates even after Chinese tiebreak' })),
-];
 const notFoundHeaders = [...mergedHeaders, 'Reason'];
 const wsNotFound = XLSX.utils.json_to_sheet(notFoundRecords, { header: notFoundHeaders });
 const wbNotFound = XLSX.utils.book_new();
 XLSX.utils.book_append_sheet(wbNotFound, wsNotFound, 'notFound');
 XLSX.writeFile(wbNotFound, notFoundFile);
 
+const contactMatchCount = [...noChangeRecords, ...yesChangeRecords].filter(r => r['Match Method'] !== 'Name').length;
+const reasonCounts = notFoundRecords.reduce((acc, r) => {
+  acc[r.Reason] = (acc[r.Reason] || 0) + 1;
+  return acc;
+}, {});
+
 console.log('');
 console.log('=== Compare Summary ===');
 console.log(`Master file (${path.basename(masterFile)}): ${masterRows.length} records`);
 console.log(`Merged file (${path.basename(mergedFile)}): ${mergedRows.length} records`);
 console.log(`No change (${noChangeFile}): ${noChangeRecords.length}`);
-console.log(`Changed (${yesChangeFile}): ${yesChangeRecords.length}`);
+console.log(`Changed (${yesChangeFile}): ${yesChangeRecords.length}${contactMatchCount ? ` (${contactMatchCount} matched via Mobile Phone/Email fallback, not name)` : ''}`);
 if (notFoundRecords.length) {
-  console.log(`Not found (${notFoundFile}): ${notFoundRecords.length} (${unmatched.length} no master record, ${ambiguous.length} still ambiguous after Chinese tiebreak)`);
+  const breakdown = Object.entries(reasonCounts).map(([reason, count]) => `${count} ${reason.toLowerCase()}`).join(', ');
+  console.log(`Not found (${notFoundFile}): ${notFoundRecords.length} (${breakdown})`);
 }
 console.log('');

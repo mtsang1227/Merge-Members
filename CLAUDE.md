@@ -35,9 +35,11 @@ node compare.js "DynamicGroupReport.xlsx" "Merged-Fellowships.xlsx"
 ```
 
 Compares every record in `mergedFile` against `masterFile` (the DynamicGroupReport-style export, source of truth for `Id`) and writes three output files:
-- `noChangeOut.xlsx` (default `noChange.xlsx`) — merged records that match a master record with no differences, tagged with the master `Id`.
-- `yesChangeOut.xlsx` (default `yesChange.xlsx`) — merged records that match a master record but differ in one or more fields, tagged with the master `Id` and a `Changed Fields` column listing what changed.
-- `notFound.xlsx` — merged records that couldn't be resolved to exactly one master record, tagged with a `Reason` column (`No master record found` or `Multiple master candidates even after Chinese tiebreak`). Not requested by the original spec, but included so unmatched records aren't silently dropped.
+- `noChangeOut.xlsx` (default `noChange.xlsx`) — merged records that match a master record with no differences, tagged with the master `Id` and a `Match Method` column.
+- `yesChangeOut.xlsx` (default `yesChange.xlsx`) — merged records that match a master record but differ in one or more fields, tagged with the master `Id`, a `Match Method` column, and a `Changed Fields` column listing what changed.
+- `notFound.xlsx` — merged records that couldn't be resolved to exactly one master record, tagged with a `Reason` column (`No master record found`, `Multiple master candidates even after Chinese tiebreak`, or `Multiple master candidates matched by Mobile Phone/Email`). Not requested by the original spec, but included so unmatched records aren't silently dropped.
+
+`Match Method` is `Name` for records matched by name (see Key Logic below), or `Contact info (name mismatch)` when the name text didn't line up but Mobile Phone or Email uniquely identified the same person within the same Last Name + Fellowship bucket — worth reviewing that subset with extra scrutiny, since contact info can occasionally be shared between family members.
 
 Both input files are required; if omitted, the script prints a usage hint and exits.
 
@@ -64,9 +66,9 @@ Records merged into 2026-Merged-List.xlsx: 562
 === Compare Summary ===
 Master file (DynamicGroupReport.xlsx): 2447 records
 Merged file (Merged-Fellowships.xlsx): 1742 records
-No change (noChange.xlsx): 189
-Changed (yesChange.xlsx): 905
-Not found (notFound.xlsx): 648 (648 no master record, 0 still ambiguous after Chinese tiebreak)
+No change (noChange.xlsx): 215
+Changed (yesChange.xlsx): 1077 (198 matched via Mobile Phone/Email fallback, not name)
+Not found (notFound.xlsx): 450 (6 multiple master candidates matched by mobile phone/email, 444 no master record found)
 ```
 
 ## File Overview
@@ -95,7 +97,8 @@ Not found (notFound.xlsx): 648 (648 no master record, 0 still ambiguous after Ch
   1. Scope candidates to the same Fellowship — the merged file's `Fellowship` value must equal the *last word* of the master file's `Fellowship` string (e.g. merged `"Esther"` matches master `"Bayview Cantonese - 2023 Esther"`) — and the same `Last Name`.
   2. Match `First Name`/`Middle Name` tolerantly: either the plain First Name matches on both sides, or an order-independent token set of First+Middle matches. This handles master sometimes storing the full name in `First Name` alone (Middle Name blank), name-order swaps (e.g. `"Wai King Peggy"` vs `"Peggy"` + `"Wai King"`), and hyphen-vs-space compound name variants (e.g. `"Shuk-Yin"` vs `"Shuk Yin"`).
   3. If more than one master candidate remains, narrow by `Chinese Name` (master) vs `Chinese` (merged).
+  4. If step 2 finds zero candidates (name text doesn't line up at all — incomplete data, unrecognized nickname), fall back to Mobile Phone or Email matching a master record within the same Last Name + Fellowship bucket. Home Phone is deliberately excluded from this fallback — it's often shared by a household/spouse and produced a real false-positive in testing (two different people, same last name and home phone, but different names/mobile/email). Records matched this way are tagged `Match Method: Contact info (name mismatch)` instead of `Name`, so they can be reviewed separately — contact info can occasionally still be shared between family members (e.g. a couple sharing one login email), so this tier is lower-confidence than a name match.
 - SG Name matching is abbreviation-tolerant (one side is a prefix of the other, e.g. merged `"Faith"` matches master `"Faithfulness"`) and is compared against master's `SG (Compute)` column, falling back to `Small Group` when `SG (Compute)` is blank (master leaves `SG (Compute)` empty whenever `Small Group` holds a person's full name rather than a single-word role/group name).
-- Once a record is matched to exactly one master record, these fields are compared to decide "changed" vs "no change": Middle Name, Chinese/Chinese Name, Home Phone, Mobile Phone/Mobile Number (compared as digits only, ignoring formatting like `(647) 778-3213` vs `647-778-3213`), Email (case-insensitive), SG Leader/SG Leader (Compute), and SG Name (using the same abbreviation-tolerant comparison as the matching step, so an abbreviation difference alone isn't flagged as a change).
-- Records with zero master candidates, or more than one candidate even after the Chinese tiebreak, are written to `notFound.xlsx` rather than silently dropped — this surfaces both genuinely new people (not yet in the master file) and ambiguous/unresolvable cases for manual review.
-- Known limitation: nickname mismatches (e.g. merged `"Tony"` vs master `"Anthony"`) and incomplete data (e.g. merged has only `"Paul"` where master's combined name is `"Paul Ching Hung"`) cannot be resolved by string matching alone and will show up in `notFound.xlsx`.
+- Once a record is matched to exactly one master record, these fields are compared to decide "changed" vs "no change": First Name (case-insensitive — flags when the match came from token-set/contact-info tolerance rather than an exact name), Middle Name, Chinese/Chinese Name, Home Phone, Mobile Phone/Mobile Number (compared as digits only, ignoring formatting like `(647) 778-3213` vs `647-778-3213`), Email (case-insensitive), SG Leader/SG Leader (Compute), and SG Name (using the same abbreviation-tolerant comparison as the matching step, so an abbreviation difference alone isn't flagged as a change).
+- Records with zero master candidates (by name or contact-info fallback), or more than one candidate at either tier, are written to `notFound.xlsx` rather than silently dropped — this surfaces both genuinely new people (not yet in the master file) and ambiguous/unresolvable cases for manual review.
+- Known limitation: matching is scoped to the same Fellowship, so if the same person appears in master under a *different* Fellowship (e.g. they switched groups and master hasn't been updated), they won't be matched and will show up in `notFound.xlsx` as if new. Nickname mismatches (e.g. merged `"Tony"` vs master `"Anthony"`) and incomplete data (e.g. merged has only `"Paul"` where master's combined name is `"Paul Ching Hung"`) also aren't resolvable by string matching alone unless Mobile Phone or Email happens to corroborate the match.
