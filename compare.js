@@ -140,7 +140,10 @@ const fieldComparisons = [
   [gHomePhone, mHomePhone, (a, b) => digitsOnly(a) === digitsOnly(b)],
   [gMobilePhone, mMobileNumber, (a, b) => digitsOnly(a) === digitsOnly(b)],
   [gEmail, mEmail, (a, b) => normKey(a) === normKey(b)],
-  [gSgLeader, mSgLeaderCompute, (a, b) => normText(a) === normText(b)],
+  // Master leaves SG Leader (Compute) blank by design for role-based small groups (e.g.
+  // "Joy", "Purple" - a single-word group name with no recorded leader), so an empty
+  // master value isn't a real difference to flag - only compare when master has one on file.
+  [gSgLeader, mSgLeaderCompute, (a, b) => !normText(b) || normText(a) === normText(b)],
   [gSgName, null, (a, b, master) => sgMatches(a, master[mSgCompute] || master[mSmallGroup])],
 ];
 
