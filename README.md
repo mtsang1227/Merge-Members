@@ -19,4 +19,14 @@ Usage: node merge.js <file1.xlsx> <file2.xlsx> <fellowship_name> [output.xlsx]
 - The fourth argument is optional and specifies the output file name (default: Result.xlsx).
 - If the output file resolves to the same path as file1, no new file is built — file2's records are appended directly onto file1's existing sheet in place, leaving file1's original rows, formatting, and other sheets untouched. Otherwise, a fresh output file is created.
 
+## Comparing a merged file against the master report
+
+Once fellowship files are merged, `compare.js` checks the merged records against the master `DynamicGroupReport.xlsx` export (the source of truth for member `Id`) to find which records are new, unchanged, or different.
+
+Usage: node compare.js <masterFile.xlsx> <mergedFile.xlsx> [noChangeOut.xlsx] [yesChangeOut.xlsx]
+- Records are matched by Last Name, First/Middle Name (tolerant of full-name-in-one-field and name-order differences), Fellowship, and SG Name/Small Group (tolerant of abbreviations), with Chinese Name used to break ties when more than one master record matches.
+- Matched records with no field differences are written to `noChangeOut.xlsx` (default `noChange.xlsx`), tagged with the master `Id`.
+- Matched records with at least one field difference are written to `yesChangeOut.xlsx` (default `yesChange.xlsx`), tagged with the master `Id` and a `Changed Fields` column.
+- Records that can't be resolved to exactly one master record (new members, nickname mismatches, incomplete data, etc.) are written to `notFound.xlsx` with a `Reason` column.
+
 
