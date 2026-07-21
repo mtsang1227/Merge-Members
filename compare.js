@@ -72,6 +72,13 @@ function fellowshipLastWord(v) {
   return parts[parts.length - 1];
 }
 
+// Last Name comparisons tolerate hyphen-vs-space formatting (e.g. "Chan-Lam" vs "Chan Lam"),
+// the same tolerance already applied to First/Middle names - used wherever Last Name is used as
+// a lookup/grouping key, not for the separate "did this field's text change" comparison.
+function normLastName(v) {
+  return normKey(String(v === undefined || v === null ? '' : v).replace(/-/g, ' '));
+}
+
 // Abbreviation-tolerant SG match: one side is a prefix of the other (e.g. "Faith" / "Faithfulness")
 function sgMatches(mergedSg, masterSg) {
   const a = normKey(mergedSg), b = normKey(masterSg);
@@ -134,6 +141,18 @@ function contactMatches(gMobile, gEmail, mr) {
   const gM = digitsOnly(gMobile), mM = digitsOnly(mr[mMobileNumber]);
   const gE = normKey(gEmail), mE = normKey(mr[mEmail]), mOE = normKey(mr[mOtherEmail]);
   return (gM && mM && gM === mM) || (gE && mE && gE === mE) || (gE && mOE && gE === mOE);
+}
+
+// Broader version used only where Chinese Name is already a mandatory, strong anchor (the
+// surname-change tier): also accepts Home Phone, and checks it/Mobile Phone cross-field (merged
+// Home Phone vs master's Mobile Number, or vice versa) - the two files don't always agree on
+// which field a given number belongs in. Home Phone's usual household-sharing risk is mitigated
+// here since Chinese Name has already narrowed the search to a specific individual.
+function contactMatchesWithHome(gHome, gMobile, gEmail, mr) {
+  const gH = digitsOnly(gHome), gM = digitsOnly(gMobile);
+  const mH = digitsOnly(mr[mHomePhone]), mM = digitsOnly(mr[mMobileNumber]);
+  const phoneMatch = (gH && (gH === mH || gH === mM)) || (gM && (gM === mM || gM === mH));
+  return phoneMatch || contactMatches(gMobile, gEmail, mr);
 }
 
 // Last resort for records with neither a usable Last Name (missing entirely) nor a Chinese
@@ -200,7 +219,7 @@ function matchByContact(pool, mergedRow, mergedFellowship) {
 // tolerance above) and SG (abbreviation-tolerant) are filtered from each bucket per merged record.
 const masterIndex = new Map();
 masterRows.forEach(row => {
-  const key = [normKey(row[mLastName]), normKey(fellowshipLastWord(row[mFellowship]))].join('|');
+  const key = [normLastName(row[mLastName]), normKey(fellowshipLastWord(row[mFellowship]))].join('|');
   if (!masterIndex.has(key)) masterIndex.set(key, []);
   masterIndex.get(key).push(row);
 });
@@ -208,7 +227,7 @@ masterRows.forEach(row => {
 // Index master rows by Last Name only, for the cross-Fellowship fallback tier below.
 const masterByLastName = new Map();
 masterRows.forEach(row => {
-  const key = normKey(row[mLastName]);
+  const key = normLastName(row[mLastName]);
   if (!masterByLastName.has(key)) masterByLastName.set(key, []);
   masterByLastName.get(key).push(row);
 });
@@ -240,7 +259,7 @@ const fieldComparisons = [
 ];
 
 mergedRows.forEach(mergedRow => {
-  const key = [normKey(mergedRow[gLastName]), normKey(mergedRow[gFellowship])].join('|');
+  const key = [normLastName(mergedRow[gLastName]), normKey(mergedRow[gFellowship])].join('|');
   const bucket = masterIndex.get(key) || [];
   let matchMethod = 'Name';
 
@@ -282,7 +301,7 @@ mergedRows.forEach(mergedRow => {
     // candidates whose Chinese Name actively disagrees, as further protection against that.
     matchMethod = 'Name (different Fellowship)';
     const gTokenSet = nameTokenSet(mergedRow[gFirstName], mergedRow[gMiddleName]);
-    const crossFellowshipPool = masterByLastName.get(normKey(mergedRow[gLastName])) || [];
+    const crossFellowshipPool = masterByLastName.get(normLastName(mergedRow[gLastName])) || [];
     candidates = dedupeById(
       crossFellowshipPool
         .filter(mr => nameTokenSet(mr[mFirstName], mr[mMiddleName]) === gTokenSet)
@@ -331,7 +350,7 @@ mergedRows.forEach(mergedRow => {
           const mC = normText(mr[mChineseName]);
           return mC.length >= 2 && (mC === gChineseName || gChineseName.includes(mC) || mC.includes(gChineseName));
         })
-        .filter(mr => contactMatches(mergedRow[gMobilePhone], mergedRow[gEmail], mr)),
+        .filter(mr => contactMatchesWithHome(mergedRow[gHomePhone], mergedRow[gMobilePhone], mergedRow[gEmail], mr)),
       mId, mFellowship, mergedRow[gFellowship]);
 
     if (surnameChangeCandidates.length === 1) {
