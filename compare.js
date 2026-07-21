@@ -302,14 +302,26 @@ mergedRows.forEach(mergedRow => {
     matchMethod = 'Name (different Fellowship)';
     const gTokenSet = nameTokenSet(mergedRow[gFirstName], mergedRow[gMiddleName]);
     const crossFellowshipPool = masterByLastName.get(normLastName(mergedRow[gLastName])) || [];
-    candidates = dedupeById(
-      crossFellowshipPool
-        .filter(mr => nameTokenSet(mr[mFirstName], mr[mMiddleName]) === gTokenSet)
-        .filter(mr => {
-          const gC = normText(mergedRow[gChinese]), mC = normText(mr[mChineseName]);
-          return !gC || !mC || gC === mC;
-        }),
-      mId, mFellowship, mergedRow[gFellowship]);
+
+    // An exact Chinese Name match is authoritative here too, same as the within-Fellowship
+    // Tier 1 check - Last Name already matches (this tier only drops the Fellowship scope), so
+    // it doesn't need the strict name-token match below when Chinese Name alone is unique and
+    // exact (e.g. "Billy" whose Middle Name partially matches master's "Yiu Wah Vincent" - the
+    // English name text differs but the full Chinese Name matches exactly).
+    const crossFellowshipChineseMatches = gChineseName
+      ? dedupeById(crossFellowshipPool.filter(mr => normText(mr[mChineseName]) === gChineseName), mId, mFellowship, mergedRow[gFellowship])
+      : [];
+
+    candidates = crossFellowshipChineseMatches.length === 1
+      ? crossFellowshipChineseMatches
+      : dedupeById(
+          crossFellowshipPool
+            .filter(mr => nameTokenSet(mr[mFirstName], mr[mMiddleName]) === gTokenSet)
+            .filter(mr => {
+              const gC = normText(mergedRow[gChinese]), mC = normText(mr[mChineseName]);
+              return !gC || !mC || gC === mC;
+            }),
+          mId, mFellowship, mergedRow[gFellowship]);
 
     if (candidates.length > 1) {
       // Name+Chinese alone didn't narrow it down (e.g. two same-named different people, no
@@ -364,9 +376,20 @@ mergedRows.forEach(mergedRow => {
     // Name is blank entirely, or Chinese Name is blank so the tier above couldn't run). Fall
     // back to requiring 2 independent contact signals in agreement, searched across all of
     // master with no name-based scoping at all.
-    const strongContactCandidates = dedupeById(
+    let strongContactCandidates = dedupeById(
       masterRows.filter(mr => twoOfThreeContactMatch(mergedRow[gHomePhone], mergedRow[gMobilePhone], mergedRow[gEmail], mr)),
       mId, mFellowship, mergedRow[gFellowship]);
+
+    if (strongContactCandidates.length > 1) {
+      // Phone numbers have turned out to be less reliable than email in this data - master has
+      // real cases of unrelated people sharing the exact same Home/Mobile Number (likely copied
+      // across rows within the same small group by mistake), which can satisfy "2 of 3" on phone
+      // alone for more than one wrong candidate. Email is more personally distinctive, so an
+      // exact match narrows to the right person even when phone numbers collide.
+      const gE = normKey(mergedRow[gEmail]);
+      const emailFiltered = gE && strongContactCandidates.filter(mr => gE === normKey(mr[mEmail]) || gE === normKey(mr[mOtherEmail]));
+      if (emailFiltered && emailFiltered.length === 1) strongContactCandidates = emailFiltered;
+    }
 
     if (strongContactCandidates.length === 1) {
       candidates = strongContactCandidates;
