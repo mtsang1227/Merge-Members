@@ -372,6 +372,29 @@ mergedRows.forEach(mergedRow => {
   }
 
   if (candidates.length !== 1) {
+    // A genuinely different (not just differently-formatted) Last Name, with no Chinese Name to
+    // anchor on - e.g. a Cantonese romanization variant ("Chung" vs "Shung"), or a merged-file
+    // parsing error that mistook part of a compound given name for a Last Name ("Athena Pui Man
+    // Ho" split into First "Athena", Last "Man"). Same Fellowship + same First Name (exact, or
+    // present as a whole word within master's First Name) plus just one strong contact signal is
+    // safer than the completely unscoped search below, since Fellowship+First Name already
+    // narrows the search before the contact signal is even checked.
+    const gFellowshipWord = normKey(mergedRow[gFellowship]);
+    const gFirst = normKey(mergedRow[gFirstName]);
+    const fellowshipFirstNameCandidates = gFirst ? dedupeById(
+      masterRows
+        .filter(mr => normKey(fellowshipLastWord(mr[mFellowship])) === gFellowshipWord)
+        .filter(mr => normKey(mr[mFirstName]).split(' ').includes(gFirst))
+        .filter(mr => contactMatches(mergedRow[gMobilePhone], mergedRow[gEmail], mr)),
+      mId, mFellowship, mergedRow[gFellowship]) : [];
+
+    if (fellowshipFirstNameCandidates.length === 1) {
+      candidates = fellowshipFirstNameCandidates;
+      matchMethod = 'Fellowship + First Name + contact info (different Last Name)';
+    }
+  }
+
+  if (candidates.length !== 1) {
     // Neither a Last Name nor a Chinese Name match was available to anchor on (e.g. merged Last
     // Name is blank entirely, or Chinese Name is blank so the tier above couldn't run). Fall
     // back to requiring 2 independent contact signals in agreement, searched across all of
