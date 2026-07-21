@@ -93,6 +93,7 @@ const mSmallGroup = getCol(masterHeaders, 'Small Group');
 const mSgLeaderCompute = getCol(masterHeaders, 'SG Leader (Compute)');
 const mChineseName = getCol(masterHeaders, 'Chinese Name');
 const mEmail = getCol(masterHeaders, 'Email');
+const mOtherEmail = getCol(masterHeaders, 'Other Email');
 const mHomePhone = getCol(masterHeaders, 'Home Phone');
 const mMobileNumber = getCol(masterHeaders, 'Mobile Number');
 
@@ -127,10 +128,12 @@ function firstNameMatches(gFirst, gMiddle, mFirst, mMiddle) {
 // the same Last Name + Fellowship bucket. Home Phone is deliberately excluded - it's often
 // shared by a household/spouse and produced a real false-positive in testing (two different
 // people with the same last name and home phone number, but different names/mobile/email).
-function contactMatches(gMobile, gEmail, mMobile, mEmail) {
-  const gM = digitsOnly(gMobile), mM = digitsOnly(mMobile);
-  const gE = normKey(gEmail), mE = normKey(mEmail);
-  return (gM && mM && gM === mM) || (gE && mE && gE === mE);
+// Checks merged Email against BOTH master's Email and Other Email columns - a real match
+// ("Georgina Leung") was only findable via Other Email, not the primary Email field.
+function contactMatches(gMobile, gEmail, mr) {
+  const gM = digitsOnly(gMobile), mM = digitsOnly(mr[mMobileNumber]);
+  const gE = normKey(gEmail), mE = normKey(mr[mEmail]), mOE = normKey(mr[mOtherEmail]);
+  return (gM && mM && gM === mM) || (gE && mE && gE === mE) || (gE && mOE && gE === mOE);
 }
 
 // Loose "does this name look like the same person" check, for breaking ties when Mobile/Email
@@ -164,7 +167,7 @@ function dedupeById(candidates, idCol, fellowshipCol, mergedFellowship) {
 // to the wrong person, where one candidate's name still looks like the merged record's).
 function matchByContact(pool, mergedRow, mergedFellowship) {
   let candidates = dedupeById(
-    pool.filter(mr => contactMatches(mergedRow[gMobilePhone], mergedRow[gEmail], mr[mMobileNumber], mr[mEmail])),
+    pool.filter(mr => contactMatches(mergedRow[gMobilePhone], mergedRow[gEmail], mr)),
     mId, mFellowship, mergedFellowship);
 
   if (candidates.length > 1) {
@@ -203,6 +206,9 @@ const notFoundRecords = [];
 const fieldComparisons = [
   [gFirstName, mFirstName, (a, b) => normKey(a) === normKey(b)],
   [gMiddleName, mMiddleName, (a, b) => normText(a) === normText(b)],
+  // Only ever differs for the Chinese Name + contact info (different Last Name) tier - a
+  // marriage/surname change master hasn't been updated to reflect, or vice versa.
+  [gLastName, mLastName, (a, b) => normKey(a) === normKey(b)],
   // Master's Fellowship is a full string ("Bayview Cantonese - 2023 Esther"); merged's is just
   // the last word ("Esther"). Only ever differs for cross-Fellowship fallback matches (see
   // below), since the other tiers already scope by matching Fellowship.
@@ -274,7 +280,7 @@ mergedRows.forEach(mergedRow => {
     if (candidates.length > 1) {
       // Name+Chinese alone didn't narrow it down (e.g. two same-named different people, no
       // Chinese on file) - Mobile/Email corroboration can still resolve it.
-      const contactFiltered = candidates.filter(mr => contactMatches(mergedRow[gMobilePhone], mergedRow[gEmail], mr[mMobileNumber], mr[mEmail]));
+      const contactFiltered = candidates.filter(mr => contactMatches(mergedRow[gMobilePhone], mergedRow[gEmail], mr));
       if (contactFiltered.length >= 1) candidates = contactFiltered;
     }
 
@@ -290,6 +296,32 @@ mergedRows.forEach(mergedRow => {
         candidates = contactCandidates;
         matchMethod = 'Contact info (different Fellowship, name mismatch)';
       }
+    }
+  }
+
+  if (candidates.length !== 1 && normText(mergedRow[gChinese])) {
+    // Last Name itself can differ from master's (marriage/surname change - e.g. merged "Kam"
+    // vs master "Kam-Ng", or merged "Lung" vs master "Lam"), which defeats every tier above
+    // since they're all scoped by Last Name. With that scope gone, search all of master
+    // requiring Chinese Name to match exactly (a strong, low-collision anchor) AND at least one
+    // of Mobile Phone/Email/Other Email to also agree - Chinese Name alone isn't required to be
+    // globally unique, so a second corroborating signal keeps this safe.
+    const gChineseName = normText(mergedRow[gChinese]);
+    const surnameChangeCandidates = dedupeById(
+      masterRows
+        // A compound married surname is sometimes prepended in one file's Chinese Name but not
+        // the other's (e.g. merged "甘伍麗兒" vs master "伍麗兒" - the "甘"/Kam character), so
+        // one containing the other counts as a match, not just exact equality.
+        .filter(mr => {
+          const mC = normText(mr[mChineseName]);
+          return mC.length >= 2 && (mC === gChineseName || gChineseName.includes(mC) || mC.includes(gChineseName));
+        })
+        .filter(mr => contactMatches(mergedRow[gMobilePhone], mergedRow[gEmail], mr)),
+      mId, mFellowship, mergedRow[gFellowship]);
+
+    if (surnameChangeCandidates.length === 1) {
+      candidates = surnameChangeCandidates;
+      matchMethod = 'Chinese Name + contact info (different Last Name)';
     }
   }
 
