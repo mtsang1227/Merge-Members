@@ -195,6 +195,50 @@ function nameResembles(gFirst, gMiddle, mFirst, mMiddle) {
   return !!g && !!m && (g.includes(m) || m.includes(g));
 }
 
+// For a record that couldn't be matched by any tier above, scan all of master for weak/partial
+// signals worth a human look - the same manual check ("does this email/Chinese Name/phone show
+// up ANYWHERE, even coincidentally") that repeatedly turned up real matches during spot-checking
+// (and occasionally a data entry error, like a merged-file email that actually belongs to a
+// different, unrelated person). None of these are strong enough to auto-match on - if they were,
+// an earlier tier would already have matched - but they're worth surfacing instead of leaving a
+// human to redo this scan by hand.
+function findPossibleLeads(mergedRow) {
+  const gEmailLocal = normKey(mergedRow[gEmail]).split('@')[0];
+  const gChineseName = normText(mergedRow[gChinese]);
+  const gMobileDigits = digitsOnly(mergedRow[gMobilePhone]);
+  const gHomeDigits = digitsOnly(mergedRow[gHomePhone]);
+
+  const leads = [];
+  masterRows.forEach(mr => {
+    const signals = [];
+
+    if (gEmailLocal) {
+      const mEmailLocal = normKey(mr[mEmail]).split('@')[0];
+      const mOtherEmailLocal = normKey(mr[mOtherEmail]).split('@')[0];
+      if (mEmailLocal && mEmailLocal === gEmailLocal) signals.push('Email local part matches Email');
+      else if (mOtherEmailLocal && mOtherEmailLocal === gEmailLocal) signals.push('Email local part matches Other Email');
+    }
+
+    if (gChineseName.length >= 2) {
+      const mChineseNameVal = normText(mr[mChineseName]);
+      if (mChineseNameVal.length >= 2 && mChineseNameVal === gChineseName) signals.push('Chinese Name matches exactly');
+      else if (mChineseNameVal.length >= 2 && (gChineseName.includes(mChineseNameVal) || mChineseNameVal.includes(gChineseName))) signals.push('Chinese Name partially overlaps');
+    }
+
+    if (gMobileDigits || gHomeDigits) {
+      const mMobileDigits = digitsOnly(mr[mMobileNumber]), mHomeDigits = digitsOnly(mr[mHomePhone]);
+      if (gMobileDigits && (gMobileDigits === mMobileDigits || gMobileDigits === mHomeDigits)) signals.push('Mobile Phone matches a master phone field');
+      if (gHomeDigits && (gHomeDigits === mMobileDigits || gHomeDigits === mHomeDigits)) signals.push('Home Phone matches a master phone field');
+    }
+
+    if (signals.length > 0) {
+      leads.push(`Id ${mr[mId]} "${normText(mr[mFirstName])} ${normText(mr[mLastName])}" (${fellowshipLastWord(mr[mFellowship])}): ${signals.join('; ')}`);
+    }
+  });
+
+  return leads.length ? `Possible lead(s) for manual review - ${leads.join(' | ')}` : '';
+}
+
 // Master sometimes lists the same person's Id more than once (once per Fellowship they belong
 // to - e.g. Id 16649 appears under both Caleb and LTG for one member, flagged "Duplicate (2x)").
 // That's the same record, not multiple candidates - collapse to one, preferring whichever row's
@@ -437,7 +481,7 @@ mergedRows.forEach(mergedRow => {
   }
 
   if (candidates.length === 0) {
-    notFoundRecords.push({ ...mergedRow, Reason: 'No master record found' });
+    notFoundRecords.push({ ...mergedRow, Reason: 'No master record found', Note: findPossibleLeads(mergedRow) });
     return;
   }
   if (candidates.length > 1) {
@@ -445,7 +489,7 @@ mergedRows.forEach(mergedRow => {
       : matchMethod === 'Contact info (name mismatch)' ? 'Multiple master candidates matched by Mobile Phone/Email'
       : matchMethod === 'Name (different Fellowship)' ? 'Multiple master candidates across different Fellowships (same name)'
       : 'Multiple master candidates across different Fellowships matched by Mobile Phone/Email';
-    notFoundRecords.push({ ...mergedRow, Reason: reason });
+    notFoundRecords.push({ ...mergedRow, Reason: reason, Note: findPossibleLeads(mergedRow) });
     return;
   }
 
@@ -475,7 +519,7 @@ const wbYesChange = XLSX.utils.book_new();
 XLSX.utils.book_append_sheet(wbYesChange, wsYesChange, 'yesChange');
 XLSX.writeFile(wbYesChange, yesChangeFile);
 
-const notFoundHeaders = [...mergedHeaders, 'Reason'];
+const notFoundHeaders = [...mergedHeaders, 'Reason', 'Note'];
 const wsNotFound = XLSX.utils.json_to_sheet(notFoundRecords, { header: notFoundHeaders });
 const wbNotFound = XLSX.utils.book_new();
 XLSX.utils.book_append_sheet(wbNotFound, wsNotFound, 'notFound');
@@ -502,6 +546,7 @@ console.log(`No change (${noChangeFile}): ${noChangeRecords.length}`);
 console.log(`Changed (${yesChangeFile}): ${yesChangeRecords.length}${fallbackBreakdown ? ` (${fallbackBreakdown})` : ''}`);
 if (notFoundRecords.length) {
   const breakdown = Object.entries(reasonCounts).map(([reason, count]) => `${count} ${reason.toLowerCase()}`).join(', ');
-  console.log(`Not found (${notFoundFile}): ${notFoundRecords.length} (${breakdown})`);
+  const leadCount = notFoundRecords.filter(r => r.Note).length;
+  console.log(`Not found (${notFoundFile}): ${notFoundRecords.length} (${breakdown})${leadCount ? ` - ${leadCount} have a possible lead noted for manual review` : ''}`);
 }
 console.log('');
