@@ -130,6 +130,21 @@ function firstNameMatches(gFirst, gMiddle, mFirst, mMiddle) {
   return normKey(gFirst) === normKey(mFirst) || nameTokenSet(gFirst, gMiddle) === nameTokenSet(mFirst, mMiddle);
 }
 
+// Emails match exactly, or - local part (before @) must match exactly, domain may be a prefix
+// of the other's ("kylaw99@hotmail" / "kylaw99@hotmail.com") - handles a truncated/malformed
+// email from a data export issue. Deliberately narrower than a whole-string prefix check (which
+// could coincidentally match unrelated people, e.g. "sam@x.com" as a prefix of a longer local
+// part) - requiring the local part to match exactly avoids that risk entirely.
+function emailMatches(gEmail, mEmail) {
+  const gE = normKey(gEmail), mE = normKey(mEmail);
+  if (!gE || !mE) return false;
+  if (gE === mE) return true;
+  const [gLocal, gDomain] = gE.split('@');
+  const [mLocal, mDomain] = mE.split('@');
+  if (!gDomain || !mDomain || gLocal !== mLocal) return false;
+  return gDomain.startsWith(mDomain) || mDomain.startsWith(gDomain);
+}
+
 // Fallback for records where the name text itself doesn't line up (e.g. incomplete name data,
 // unrecognized nickname) but Mobile Phone or Email uniquely identifies the same person within
 // the same Last Name + Fellowship bucket. Home Phone is deliberately excluded - it's often
@@ -139,8 +154,7 @@ function firstNameMatches(gFirst, gMiddle, mFirst, mMiddle) {
 // ("Georgina Leung") was only findable via Other Email, not the primary Email field.
 function contactMatches(gMobile, gEmail, mr) {
   const gM = digitsOnly(gMobile), mM = digitsOnly(mr[mMobileNumber]);
-  const gE = normKey(gEmail), mE = normKey(mr[mEmail]), mOE = normKey(mr[mOtherEmail]);
-  return (gM && mM && gM === mM) || (gE && mE && gE === mE) || (gE && mOE && gE === mOE);
+  return (gM && mM && gM === mM) || emailMatches(gEmail, mr[mEmail]) || emailMatches(gEmail, mr[mOtherEmail]);
 }
 
 // Broader version used only where Chinese Name is already a mandatory, strong anchor (the
@@ -164,7 +178,7 @@ function contactMatchesWithHome(gHome, gMobile, gEmail, mr) {
 // with no Last Name/Chinese Name to scope the search, but two independent fields both
 // coincidentally matching the wrong person is very unlikely.
 function twoOfThreeContactMatch(gHome, gMobile, gEmail, mr) {
-  const emailMatch = normKey(gEmail) && (normKey(gEmail) === normKey(mr[mEmail]) || normKey(gEmail) === normKey(mr[mOtherEmail]));
+  const emailMatch = emailMatches(gEmail, mr[mEmail]) || emailMatches(gEmail, mr[mOtherEmail]);
   const mobileMatch = digitsOnly(gMobile) && digitsOnly(gMobile) === digitsOnly(mr[mMobileNumber]);
   const homeMatch = digitsOnly(gHome) && digitsOnly(gHome) === digitsOnly(mr[mHomePhone]);
   return [emailMatch, mobileMatch, homeMatch].filter(Boolean).length >= 2;
@@ -250,7 +264,7 @@ const fieldComparisons = [
   [gChinese, mChineseName, (a, b) => normText(a) === normText(b)],
   [gHomePhone, mHomePhone, (a, b) => digitsOnly(a) === digitsOnly(b)],
   [gMobilePhone, mMobileNumber, (a, b) => digitsOnly(a) === digitsOnly(b)],
-  [gEmail, mEmail, (a, b) => normKey(a) === normKey(b)],
+  [gEmail, mEmail, (a, b) => normKey(a) === normKey(b) || emailMatches(a, b)],
   // Master leaves SG Leader (Compute) blank by design for role-based small groups (e.g.
   // "Joy", "Purple" - a single-word group name with no recorded leader), so an empty
   // master value isn't a real difference to flag - only compare when master has one on file.
@@ -385,7 +399,10 @@ mergedRows.forEach(mergedRow => {
       masterRows
         .filter(mr => normKey(fellowshipLastWord(mr[mFellowship])) === gFellowshipWord)
         .filter(mr => normKey(mr[mFirstName]).split(' ').includes(gFirst))
-        .filter(mr => contactMatches(mergedRow[gMobilePhone], mergedRow[gEmail], mr)),
+        // Fellowship+First Name already narrowed the search, same as the Chinese-anchored tier -
+        // so the same Home Phone/cross-field tolerance is safe here too (a real match, "Lisa
+        // Leung", was only findable because merged's Home Phone equaled master's Mobile Number).
+        .filter(mr => contactMatchesWithHome(mergedRow[gHomePhone], mergedRow[gMobilePhone], mergedRow[gEmail], mr)),
       mId, mFellowship, mergedRow[gFellowship]) : [];
 
     if (fellowshipFirstNameCandidates.length === 1) {
@@ -409,9 +426,8 @@ mergedRows.forEach(mergedRow => {
       // across rows within the same small group by mistake), which can satisfy "2 of 3" on phone
       // alone for more than one wrong candidate. Email is more personally distinctive, so an
       // exact match narrows to the right person even when phone numbers collide.
-      const gE = normKey(mergedRow[gEmail]);
-      const emailFiltered = gE && strongContactCandidates.filter(mr => gE === normKey(mr[mEmail]) || gE === normKey(mr[mOtherEmail]));
-      if (emailFiltered && emailFiltered.length === 1) strongContactCandidates = emailFiltered;
+      const emailFiltered = strongContactCandidates.filter(mr => emailMatches(mergedRow[gEmail], mr[mEmail]) || emailMatches(mergedRow[gEmail], mr[mOtherEmail]));
+      if (emailFiltered.length === 1) strongContactCandidates = emailFiltered;
     }
 
     if (strongContactCandidates.length === 1) {
