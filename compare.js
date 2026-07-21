@@ -136,6 +136,21 @@ function contactMatches(gMobile, gEmail, mr) {
   return (gM && mM && gM === mM) || (gE && mE && gE === mE) || (gE && mOE && gE === mOE);
 }
 
+// Last resort for records with neither a usable Last Name (missing entirely) nor a Chinese
+// Name (blank) to anchor on: require at least 2 of {Email, Mobile Phone, Home Phone} to
+// independently agree with the same candidate, each compared to its own counterpart field (not
+// cross-field - a single cross-field phone coincidence, e.g. merged Home Phone matching master's
+// Mobile Number, isn't strong enough alone and was deliberately left unmatched in testing).
+// A single matching field alone (especially Home Phone, shared by a household) isn't reliable
+// with no Last Name/Chinese Name to scope the search, but two independent fields both
+// coincidentally matching the wrong person is very unlikely.
+function twoOfThreeContactMatch(gHome, gMobile, gEmail, mr) {
+  const emailMatch = normKey(gEmail) && (normKey(gEmail) === normKey(mr[mEmail]) || normKey(gEmail) === normKey(mr[mOtherEmail]));
+  const mobileMatch = digitsOnly(gMobile) && digitsOnly(gMobile) === digitsOnly(mr[mMobileNumber]);
+  const homeMatch = digitsOnly(gHome) && digitsOnly(gHome) === digitsOnly(mr[mHomePhone]);
+  return [emailMatch, mobileMatch, homeMatch].filter(Boolean).length >= 2;
+}
+
 // Loose "does this name look like the same person" check, for breaking ties when Mobile/Email
 // match different candidates (e.g. a shared family email cross-attributed to the wrong person).
 // Compares First+Middle with all whitespace/hyphens stripped, checking either side contains the
@@ -322,6 +337,21 @@ mergedRows.forEach(mergedRow => {
     if (surnameChangeCandidates.length === 1) {
       candidates = surnameChangeCandidates;
       matchMethod = 'Chinese Name + contact info (different Last Name)';
+    }
+  }
+
+  if (candidates.length !== 1) {
+    // Neither a Last Name nor a Chinese Name match was available to anchor on (e.g. merged Last
+    // Name is blank entirely, or Chinese Name is blank so the tier above couldn't run). Fall
+    // back to requiring 2 independent contact signals in agreement, searched across all of
+    // master with no name-based scoping at all.
+    const strongContactCandidates = dedupeById(
+      masterRows.filter(mr => twoOfThreeContactMatch(mergedRow[gHomePhone], mergedRow[gMobilePhone], mergedRow[gEmail], mr)),
+      mId, mFellowship, mergedRow[gFellowship]);
+
+    if (strongContactCandidates.length === 1) {
+      candidates = strongContactCandidates;
+      matchMethod = 'Contact info (2 of 3 signals, no Last Name/Chinese Name match)';
     }
   }
 
